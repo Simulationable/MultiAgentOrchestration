@@ -1,0 +1,6 @@
+@EchoCore_HostAddress = http://localhost:5029
+
+GET {{EchoCore_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
