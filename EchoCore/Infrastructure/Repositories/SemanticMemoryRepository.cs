@@ -19,6 +19,12 @@ namespace EchoCore.Infrastructure.Repositories
 
         public Task Add(SemanticMemoryEntry entry, CancellationToken cancellationToken = default)
         {
+            if (entry == null)
+            {
+                _logger.LogWarning("Attempted to add null SemanticMemoryEntry.");
+                throw new ArgumentNullException(nameof(entry));
+            }
+
             _db.Set<SemanticMemoryEntry>().Add(entry);
             return Task.CompletedTask;
         }
@@ -38,45 +44,75 @@ namespace EchoCore.Infrastructure.Repositories
 
         public async Task<List<SemanticMemoryEntry>> SearchSimilarAsync(Guid threadId, float[] queryEmbedding, int topN = 3, CancellationToken cancellationToken = default)
         {
+            if (queryEmbedding == null || queryEmbedding.Length == 0)
+            {
+                _logger.LogWarning("SearchSimilarAsync called with null or empty queryEmbedding.");
+                return new List<SemanticMemoryEntry>();
+            }
+
             var entries = await _db.Set<SemanticMemoryEntry>()
                 .AsNoTracking()
                 .Where(e => e.ThreadId == threadId)
                 .ToListAsync(cancellationToken);
 
+            if (!entries.Any())
+            {
+                _logger.LogInformation("No semantic memory entries found for thread {ThreadId}.", threadId);
+                return new List<SemanticMemoryEntry>();
+            }
+
             var scoredEntries = entries
-                .Select(e => new
+                .Select(e =>
                 {
-                    Entry = e,
-                    Score = CosineSimilarity(e.Embedding, queryEmbedding)
+                    if (e.Embedding == null || e.Embedding.Length != queryEmbedding.Length)
+                    {
+                        return null;
+                    }
+
+                    var similarity = CosineSimilarity(e.Embedding, queryEmbedding);
+
+                    var weightedScore = similarity;
+
+                    return new
+                    {
+                        Entry = e,
+                        Score = weightedScore
+                    };
                 })
-                .Where(x => x.Score >= 0)
-                .OrderByDescending(x => x.Score)
+                .Where(x => x != null && x.Score >= 0)
+                .Select(x => x!.Entry)
                 .Take(topN)
-                .Select(x => x.Entry)
                 .ToList();
 
-            _logger.LogInformation("SearchSimilarAsync: Found {Count} top matches for thread {ThreadId}", scoredEntries.Count, threadId);
+            _logger.LogInformation("SearchSimilarAsync: Found {Count} top matches for thread {ThreadId}.", scoredEntries.Count, threadId);
 
             return scoredEntries;
         }
 
-        private static float CosineSimilarity(float[] a, float[] b)
+        private double CosineSimilarity(float[] vec1, float[] vec2)
         {
-            if (a.Length != b.Length) return -1f;
-
-            float dot = 0f, magA = 0f, magB = 0f;
-            for (int i = 0; i < a.Length; i++)
+            if (vec1 == null || vec2 == null || vec1.Length != vec2.Length)
             {
-                dot += a[i] * b[i];
-                magA += a[i] * a[i];
-                magB += b[i] * b[i];
+                return 0;
             }
 
-            var denominator = Math.Sqrt(magA) * Math.Sqrt(magB);
-            if (denominator < 1e-8) return -1f;
+            double dot = 0.0;
+            double mag1 = 0.0;
+            double mag2 = 0.0;
 
-            var cosine = dot / (float)(denominator);
-            return cosine;
+            for (int i = 0; i < vec1.Length; i++)
+            {
+                dot += vec1[i] * vec2[i];
+                mag1 += vec1[i] * vec1[i];
+                mag2 += vec2[i] * vec2[i];
+            }
+
+            if (mag1 == 0 || mag2 == 0)
+            {
+                return 0;
+            }
+
+            return dot / (Math.Sqrt(mag1) * Math.Sqrt(mag2));
         }
     }
 }
